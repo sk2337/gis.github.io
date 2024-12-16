@@ -1,0 +1,42 @@
+project:
+  type: website
+  output-dir: docs
+
+website:
+  title: "GIS_Final_Project"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - href: eda.qmd
+        text: EDA
+      - text: Country
+        menu:
+          - href: country_level1.qmd
+            text: General
+          - href: country_level2.qmd
+            text: Geographical Factors
+          - href: country_level3.qmd
+            text: Delivery Quality
+          - href: country_level4.qmd
+            text: Population Density
+      - text: State
+        menu:
+          - href: state_level1.qmd
+            text: Population Density
+          - href: state_level2.qmd
+            text: Coastal vs. Land
+          - href: state_level3.qmd
+            text: Climate
+          - href: state_level4.qmd
+            text: Education
+      - href: conclusion.qmd
+        text: Conclusion
+
+format:
+  html:
+    theme: cosmo
+    css: styles.css
+    toc: true
+
+editor: visual

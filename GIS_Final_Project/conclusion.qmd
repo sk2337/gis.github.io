@@ -1,0 +1,25 @@
+---
+title: "Conclusion"
+editor: visual
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+1.  **Global Insights:**
+    -   Delivery infrastructure and quality emerge as pivotal determinants of happiness, highlighting the importance of accessibility and efficiency in resource distribution.
+    -   Coastal states and regions with polar and temperate climates report higher happiness levels, suggesting a correlation between environmental factors and well-being.
+    -   Population density exhibits a non-linear relationship with happiness, suggesting that both highly urbanized and sparsely populated regions face unique challenges in achieving well-being.
+
+2.  **State-Level Insights in the United States:**
+    -   Landlocked states and regions with moderate climates (subtropical) report higher happiness levels, suggesting a correlation between environmental factors and well-being.
+    -   Urban-rural dynamics play a role, with mixed results pointing to varying challenges faced by densely populated cities and rural communities.
+    -   Local revenues for student activities are also an important factor, potentially influenced by socio-economic, demographic, or policy factors.
+
+Overall, we could see that considering geographic and infrastructural contexts in public policies to enhance societal well-being would contribute to higher happiness scores. For instance, investments in logistical networks and inclusive urban planning could address disparities arising from delivery quality and population density. Similarly, environmental strategies that account for regional differences in climate and geography could bolster happiness outcomes.
+
+While this analysis provides robust evidence of the relationship between spatial factors and happiness, it also suggests areas for future research. By integrating geospatial analytics with social science research, this project demonstrates the potential for informed, data-driven approaches to improving happiness and quality of life on a global scale.

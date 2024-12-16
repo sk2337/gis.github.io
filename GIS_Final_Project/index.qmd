@@ -1,0 +1,25 @@
+---
+title: "GIS Final Project"
+---
+
+### Introduction
+
+This project undertakes a comprehensive exploration of global and state-level happiness by integrating geospatial and statistical analyses to identify key factors influencing happiness scores. The primary aim is to assess how geographic, demographic, and infrastructural variables contribute to variations in happiness across countries and U.S. states. By employing advanced spatial data visualization and modeling techniques, the study investigates correlations between happiness levels and spatial predictors, offering valuable insights into the geographical dimensions of well-being.
+
+At the global level, the analysis focuses on:
+
+- **Population density and happiness patterns:** Examining how urbanization and population distribution relate to happiness scores.
+
+- **Delivery infrastructure and quality:** Assessing the impact of logistical networks on national well-being.
+
+- **Geographic determinants of happiness:** Identifying trends associated with regional differences in topographical features and proximity to resources.
+
+At the U.S. state level, the project explores:
+
+- **Population density and rural-urban disparities:** Analyzing whether densely populated or rural regions report higher levels of happiness.
+
+- **Climate zones and coastal access:** Evaluating the relationship between environmental factors, such as climate and proximity to coasts, and happiness.
+
+- **Spatial predictors of happiness:** Incorporating spatial modeling to uncover less apparent influences on well-being.
+
+This project bridges the domains of geography, social sciences, and public policy. By analyzing large-scale datasets with exploratory data analysis (EDA) and inferential methods, it aims to provide actionable insights for policymakers, urban planners, and social researchers.

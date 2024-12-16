@@ -1,0 +1,280 @@
+---
+title: "Analysis of Population Density and Happiness Pattern"
+editor: visual
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+Then, I looked at the relationship between population density and happiness across countries. By categorizing countries into population density tiers and analyzing happiness scores (Life Ladder), it demonstrated patterns and clustering in global well-being.
+
+
+```{r}
+# Load libraries
+library(tidyverse)
+library(sf)
+library(spdep)
+library(viridis)
+library(readxl)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(corrplot)
+```
+
+```{r}
+# Load spatial and happiness datasets
+world_sf <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+happiness_data <- read_excel("../data/WHR20_DataForTable2.1.xls")
+```
+
+```{r}
+# Select relevant columns
+happiness_data <- happiness_data %>%
+  select(
+    `year`, `Country name`, `Life Ladder`, `Log GDP per capita`
+  )
+
+```
+
+```{r}
+# Ensure the Life Ladder column is numeric
+happiness_data <- happiness_data %>%
+  mutate(`Life Ladder` = as.numeric(`Life Ladder`))
+```
+
+```{r}
+# Merge spatial and happiness data
+merged_sf <- left_join(world_sf, happiness_data, by = c("name" = "Country name"))
+merged_sf <- merged_sf[!is.na(merged_sf$`Life Ladder`), ] # Remove rows with missing happiness scores
+
+```
+
+```{r}
+merged_sf <- st_transform(merged_sf, crs = 3857)
+```
+
+```{r}
+country_area <- read_csv("../data/Area.csv", show_col_types = FALSE)
+```
+
+```{r}
+country_area <- country_area %>% 
+  select(`name`, `sq km`)
+```
+
+```{r}
+merged_sf <- left_join(merged_sf, country_area, by = c("name" = "name"))
+```
+
+```{r}
+merged_sf <- merged_sf %>%
+  mutate(pop_density = pop_est / `sq km`)
+```
+
+To get an understanding of the relationship between the happiness scores and the countries' population densities, I merged the global spatial data with happiness indicators, and the population density by using population estimates and land area. Countries were categorized into four classes based on population density:
+
+Low Density: Sparsely populated regions.
+Medium Density: Moderately populated countries.
+High Density: Countries with significant population concentration.
+Very High Density: Extremely dense regions.
+
+```{r}
+# Categorize countries by population density
+merged_sf$pop_density_category <- cut(
+  merged_sf$pop_density,
+  breaks = quantile(merged_sf$pop_density, probs = seq(0, 1, by = 0.25), na.rm = TRUE),
+  labels = c("Low", "Medium", "High", "Very High"),
+  include.lowest = TRUE
+)
+
+# Compute average happiness by population density
+density_stats <- merged_sf %>%
+  group_by(pop_density_category) %>%
+  summarize(avg_happiness = mean(`Life Ladder`, na.rm = TRUE))
+
+print(density_stats)
+
+# Visualize happiness by population density
+ggplot(merged_sf) +
+  geom_sf(aes(fill = `Life Ladder`), color = "white") +
+  facet_wrap(~pop_density_category) +
+  scale_fill_viridis_c(option = "B") +
+  theme_minimal() +
+  labs(title = "Happiness Scores by Population Density", fill = "Happiness Score")
+
+```
+
+Average happiness scores varied across these categories, with low-density countries having the highest average happiness (5.76), followed by very high-density countries (5.64), and medium-density countries showing the lowest average happiness (5.08). This suggests a complex relationship between population density and well-being, potentially influenced by governance, resource allocation, or cultural factors.
+
+### Spatial Autocorrelation Analysis
+
+```{r}
+merged_sf <- merged_sf[!is.na(merged_sf$`pop_density_category`), ] # Remove rows with missing happiness scores
+```
+
+```{r}
+# Subset coastal and landlocked countries
+low_den_countries <- merged_sf[merged_sf$pop_density_category == "Low", ]
+mod_den_countries <- merged_sf[merged_sf$pop_density_category == "Medium", ]
+high_den_countries <- merged_sf[merged_sf$pop_density_category == "High", ]
+very_high_den_countries <- merged_sf[merged_sf$pop_density_category == "Very High", ]
+
+# Create spatial weights for Low Freedom countries
+low_den_coords <- st_coordinates(st_centroid(low_den_countries))
+low_den_knn <- spdep::knearneigh(low_den_coords, k = 5)
+low_den_listw <- spdep::nb2listw(spdep::knn2nb(low_den_knn), style = "W")
+
+# Moran's I for Low Freedom countries
+low_den_moran <- spdep::moran.test(low_den_countries$`Life Ladder`, low_den_listw)
+print(low_den_moran)
+
+# Create spatial weights for Moderate Freedom countries
+mod_den_coords <- st_coordinates(st_centroid(mod_den_countries))
+mod_den_knn <- spdep::knearneigh(mod_den_coords, k = 5)
+mod_den_listw <- spdep::nb2listw(spdep::knn2nb(mod_den_knn), style = "W")
+
+# Moran's I for Moderate Freedom countries
+mod_den_moran <- spdep::moran.test(mod_den_countries$`Life Ladder`, mod_den_listw)
+print(mod_den_moran)
+
+# Create spatial weights for High Freedom countries
+high_den_coords <- st_coordinates(st_centroid(high_den_countries))
+high_den_knn <- spdep::knearneigh(high_den_coords, k = 5)
+high_den_listw <- spdep::nb2listw(spdep::knn2nb(high_den_knn), style = "W")
+
+# Moran's I for High Freedom countries
+high_den_moran <- spdep::moran.test(high_den_countries$`Life Ladder`, high_den_listw)
+print(high_den_moran)
+
+# Create spatial weights for High Freedom countries
+very_high_den_coords <- st_coordinates(st_centroid(very_high_den_countries))
+very_high_den_knn <- spdep::knearneigh(very_high_den_coords, k = 5)
+very_high_den_listw <- spdep::nb2listw(spdep::knn2nb(very_high_den_knn), style = "W")
+
+# Moran's I for High Freedom countries
+very_high_den_moran <- spdep::moran.test(very_high_den_countries$`Life Ladder`, very_high_den_listw)
+print(very_high_den_moran)
+```
+
+Moran's I tests revealed significant spatial clustering of happiness scores within each population density category:
+
+Low Density: Moran's I = 0.899, indicating strong clustering of happiness scores.
+Medium Density: Moran's I = 0.777, showing moderate clustering.
+High Density: Moran's I = 0.918, highlighting strong spatial autocorrelation.
+Very High Density: Moran's I = 0.857, suggesting robust clustering.
+
+These results showed that happiness scores are not randomly distributed but influenced by geographic proximity and shared regional characteristics.
+
+### Exploratory Visualizations
+
+```{r}
+# Scatterplot of Population Density vs. Happiness Score
+ggplot(merged_sf, aes(x = pop_density, y = `Life Ladder`)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  theme_minimal() +
+  labs(
+    title = "Relationship Between Population Density and Happiness",
+    x = "Population Density (People per Sq Km)",
+    y = "Happiness Score"
+  )
+
+```
+
+```{r}
+# Compute Moran's I for Population Density
+pop_density_nb <- spdep::poly2nb(merged_sf, queen = TRUE)
+
+# Allow empty neighbor sets
+pop_density_listw <- spdep::nb2listw(pop_density_nb, style = "W", zero.policy = TRUE)
+
+# Compute Moran's I for Population Density
+pop_density_moran <- spdep::moran.test(merged_sf$pop_density, pop_density_listw, zero.policy = TRUE)
+
+# Print the Moran's I result
+print(pop_density_moran)
+
+```
+
+### Clustering Analysis
+
+K-Means clustering grouped countries based on happiness scores and population density into three clusters:
+
+Cluster 1: Countries with low happiness and low-to-moderate population density.
+Cluster 2: Countries with moderate happiness but low population density, representing unique regional trends.
+Cluster 3: Countries with high happiness and varying population densities.
+
+
+```{r}
+merged_sf <- merged_sf %>%
+  mutate(`Life Ladder` = as.numeric(`Life Ladder`))
+
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(cluster)
+library(ggplot2)
+
+# Select numeric columns only, excluding geometry
+cluster_data <- merged_sf %>%
+  st_drop_geometry() %>%  # Drop the geometry column
+  select(pop_density, `Life Ladder`) %>%
+  drop_na()  # Remove rows with missing values
+
+# Scale the numeric data
+cluster_data_scaled <- scale(cluster_data)
+
+```
+
+```{r}
+# Determine the optimal number of clusters using the Elbow method
+set.seed(123)  # For reproducibility
+wss <- map_dbl(1:10, function(k) {
+  kmeans(cluster_data_scaled, centers = k, nstart = 25)$tot.withinss
+})
+
+# Plot the Elbow method
+plot(1:10, wss, type = "b", pch = 19, frame = FALSE,
+     xlab = "Number of Clusters (k)",
+     ylab = "Total Within-Cluster Sum of Squares")
+
+# Perform k-means clustering with the optimal number of clusters
+optimal_k <- 3  # Replace with the optimal number from the Elbow plot
+kmeans_result <- kmeans(cluster_data_scaled, centers = optimal_k, nstart = 25)
+
+# Add cluster assignments to the original dataset
+merged_sf$cluster <- as.factor(kmeans_result$cluster)
+```
+
+```{r}
+# Scatterplot
+ggplot(merged_sf, aes(x = pop_density, y = `Life Ladder`, color = cluster)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Clustering Population Density and Happiness Scores",
+       x = "Population Density",
+       y = "Happiness Score",
+       color = "Cluster")
+
+```
+
+```{r}
+library(sf)
+
+# Spatial Map
+ggplot(merged_sf) +
+  geom_sf(aes(fill = cluster)) +
+  theme_minimal() +
+  labs(title = "Clustering Results on Map",
+       fill = "Cluster")
+
+```
+
+While low-density countries had the highest average happiness, very high-density regions also exhibited high scores, challenging the assumption that density negatively impacts well-being.
+Medium-density regions had the lowest happiness, possibly reflecting economic or governance challenges in countries transitioning between rural and urban characteristics.v

@@ -1,0 +1,110 @@
+---
+title: "Analysis of Global Delivery Quality"
+editor: visual
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+As we saw from the EDA, the delivery quality was a signifant factor that determined the happiness score. I thought this was an interesting finding and wanted to analyze if this factor is related to the geographical factor.
+
+
+```{r}
+# Load libraries
+library(tidyverse)
+library(sf)
+library(spdep)
+library(viridis)
+library(readxl)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(corrplot)
+```
+
+```{r}
+# Load spatial and happiness datasets
+world_sf <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+happiness_data <- read_excel("../data/WHR20_DataForTable2.1.xls")
+```
+
+```{r}
+# Select relevant columns
+happiness_data <- happiness_data %>%
+  select(
+    `year`, `Country name`, `Life Ladder`, `Log GDP per capita`, `Delivery Quality`
+  )
+
+```
+
+```{r}
+# Ensure the Life Ladder column is numeric
+happiness_data <- happiness_data %>%
+  mutate(`Life Ladder` = as.numeric(`Life Ladder`))
+```
+
+```{r}
+# Merge spatial and happiness data
+merged_sf <- left_join(world_sf, happiness_data, by = c("name" = "Country name"))
+merged_sf <- merged_sf[!is.na(merged_sf$`Life Ladder`), ] # Remove rows with missing happiness scores
+
+```
+
+```{r}
+merged_sf <- st_transform(merged_sf, crs = 3857)
+```
+
+```{r}
+summary(merged_sf$`Delivery Quality`)
+```
+
+The analysis began by integrating the Delivery Quality variable from the World Happiness Report with global spatial data. After filtering out rows with missing values, the dataset covered countries with valid Delivery Quality scores, ranging from -2.14 (low) to 2.18 (high). The mean score was close to zero, indicating a balanced distribution around the global average. This variable highlights significant disparities between countries, reflecting differences in governance and institutional efficiency.
+
+### Spatial Autocorrelation
+
+```{r}
+# Filter out rows with missing values
+merged_sf_clean <- merged_sf[!is.na(merged_sf$`Delivery Quality`), ]
+
+# Compute Moran's I for Delivery Quality
+delivery_quality_nb <- spdep::poly2nb(merged_sf_clean, queen = TRUE)
+
+# Allow empty neighbor sets
+delivery_quality_listw <- spdep::nb2listw(delivery_quality_nb, style = "W", zero.policy = TRUE)
+
+# Compute Moran's I for the numeric version of Delivery Quality
+delivery_quality_moran <- spdep::moran.test(merged_sf_clean$`Delivery Quality`, delivery_quality_listw, zero.policy = TRUE)
+
+# Print the Moran's I result
+print(delivery_quality_moran)
+```
+
+The Moran's I test was applied to evaluate the spatial autocorrelation of Delivery Quality. The result (Moran's I = 0.738, p-value < 2.2e-16) indicates a strong and statistically significant clustering of delivery quality scores. This means that countries with similar scores—whether high or low—are geographically proximate, suggesting that regional factors such as shared economic conditions or governance practices play a role in delivery quality.
+
+### Exploratory Visualizations
+
+```{r}
+ggplot(merged_sf_clean) +
+  geom_sf(aes(fill = `Delivery Quality`), color = "white") +
+  scale_fill_viridis_c(option = "C", na.value = "gray") +
+  theme_minimal() +
+  labs(title = "Global Delivery Quality Scores", fill = "Delivery Quality")
+
+```
+
+
+```{r}
+local_moran <- spdep::localmoran(merged_sf_clean$`Delivery Quality`, delivery_quality_listw)
+merged_sf_clean$Ii <- local_moran[, "Ii"]
+merged_sf_clean$p_value <- local_moran[, "Pr(z != E(Ii))"]
+
+ggplot(merged_sf_clean) +
+  geom_sf(aes(fill = Ii), color = "black") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  labs(title = "Local Moran's I for Delivery Quality", fill = "Local Moran's I")
+
+```

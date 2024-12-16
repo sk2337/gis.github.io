@@ -1,0 +1,224 @@
+---
+title: "Analysis of State-Level Happiness and Population Density in the United States"
+editor: visual
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+After taking a look at the happiness scores by each country and what factors are influencial in determining people's happiness, I wanted to examine the relationship between happiness scores and population density across U.S. states to get an idea of whether the same factors that influenced the happiness scores have the same impact on state-level or not. Also, analyses of the relationship between the happiness score and its factors didn't seem to give accurate results, especially for the coastal/non-coastal area where most countries were categorized as 'coastal', so I decided to go into more detail and analyzed the relationship by narrowing the scope.
+
+For this section, I started analyzing the data by categorizing states based on population density and analyzing happiness scores.
+
+```{r}
+# Load libraries
+library(tidyverse)
+library(sf)
+library(spdep)
+library(viridis)
+library(readxl)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(corrplot)
+```
+
+```{r}
+# Load spatial and happiness datasets
+us_states <- ne_states(country = "United States of America", returnclass = "sf")
+happiness_state <- read_csv("../data/happiest-states-2024.csv", show_col_types = FALSE)
+```
+
+```{r}
+# Merge spatial and happiness data
+merged_sf <- left_join(us_states, happiness_state, by = c("name" = "state"))
+merged_sf <- merged_sf[!is.na(merged_sf$HappiestStatesTotalHappinessScore), ] # Remove rows with missing happiness scores
+```
+
+```{r}
+merged_sf <- st_transform(merged_sf, crs = 3857)
+```
+
+```{r}
+country_area <- read_csv("../data/united-states-by-density-2024.csv", show_col_types = FALSE)
+```
+
+```{r}
+merged_sf <- left_join(merged_sf, country_area, by = c("name" = "state"))
+```
+
+```{r}
+# Categorize countries by population density
+merged_sf$pop_density_category <- cut(
+  merged_sf$densityMi,
+  breaks = quantile(merged_sf$densityMi, probs = seq(0, 1, by = 0.25), na.rm = TRUE),
+  labels = c("Low", "Medium", "High", "Very High"),
+  include.lowest = TRUE
+)
+
+# Visualize happiness by population density
+ggplot(merged_sf) +
+  geom_sf(aes(fill = HappiestStatesTotalHappinessScore), color = "white") +
+  facet_wrap(~pop_density_category) +
+  scale_fill_viridis_c(option = "B") +
+  theme_minimal() +
+  labs(title = "Happiness Scores by Population Density", fill = "Happiness Score")
+
+```
+
+I used the happiness data that has the happiness scores of people in each state, measured in 2024, and merged it with the population density data that has the density for each state. Then, I categorized the population density into four parts, low, medium, high, very high density, so that I could get a better understanding of whether population densities influence people's happiness and see whether a low or high density affects people's sentiment.
+
+### Exploratory Insights
+
+From this scatterplot, it revealed that there isn't a clear linear relationship between population density and happiness scores. While some low-density states exhibit high happiness, other density categories display mixed results, suggesting additional factors influencing well-being.
+
+Low-density states tend to have more consistent happiness scores, potentially due to lifestyle factors like reduced congestion and access to nature. Medium-density states show more variability, reflecting diverse urban and suburban environments.
+
+### Spatial Autocorrelation Analysis
+
+To look into closer of whether the scatterplot showed the correct result, I used Moran's I to test the following hypothesis:
+
+H0: Happiness levels are not determined by the neighboring states.
+Ha: Happiness levels are determined by the neighboring states.
+
+```{r}
+merged_sf <- merged_sf[!is.na(merged_sf$`pop_density_category`), ] # Remove rows with missing happiness scores
+```
+
+```{r}
+# Subset coastal and landlocked countries
+low_den_countries <- merged_sf[merged_sf$pop_density_category == "Low", ]
+mod_den_countries <- merged_sf[merged_sf$pop_density_category == "Medium", ]
+high_den_countries <- merged_sf[merged_sf$pop_density_category == "High", ]
+very_high_den_countries <- merged_sf[merged_sf$pop_density_category == "Very High", ]
+
+# Create spatial weights for Low Freedom countries
+low_den_coords <- st_coordinates(st_centroid(low_den_countries))
+low_den_knn <- spdep::knearneigh(low_den_coords, k = 5)
+low_den_listw <- spdep::nb2listw(spdep::knn2nb(low_den_knn), style = "W")
+
+# Moran's I for Low Freedom countries
+low_den_moran <- spdep::moran.test(low_den_countries$`HappiestStatesTotalHappinessScore`, low_den_listw)
+print(low_den_moran)
+
+# Create spatial weights for Moderate Freedom countries
+mod_den_coords <- st_coordinates(st_centroid(mod_den_countries))
+mod_den_knn <- spdep::knearneigh(mod_den_coords, k = 5)
+mod_den_listw <- spdep::nb2listw(spdep::knn2nb(mod_den_knn), style = "W")
+
+# Moran's I for Moderate Freedom countries
+mod_den_moran <- spdep::moran.test(mod_den_countries$`HappiestStatesTotalHappinessScore`, mod_den_listw)
+print(mod_den_moran)
+
+# Create spatial weights for High Freedom countries
+high_den_coords <- st_coordinates(st_centroid(high_den_countries))
+high_den_knn <- spdep::knearneigh(high_den_coords, k = 5)
+high_den_listw <- spdep::nb2listw(spdep::knn2nb(high_den_knn), style = "W")
+
+# Moran's I for High Freedom countries
+high_den_moran <- spdep::moran.test(high_den_countries$`HappiestStatesTotalHappinessScore`, high_den_listw)
+print(high_den_moran)
+
+# Create spatial weights for High Freedom countries
+very_high_den_coords <- st_coordinates(st_centroid(very_high_den_countries))
+very_high_den_knn <- spdep::knearneigh(very_high_den_coords, k = 5)
+very_high_den_listw <- spdep::nb2listw(spdep::knn2nb(very_high_den_knn), style = "W")
+
+# Moran's I for High Freedom countries
+very_high_den_moran <- spdep::moran.test(very_high_den_countries$`HappiestStatesTotalHappinessScore`, very_high_den_listw)
+print(very_high_den_moran)
+```
+
+After calculating the Moran's I for different population densities, it showed that for low, high, and very high density states, the p-value was more than 0.05 and didn't reveal any significance. Yet, for the population density categorized as "medium", the p-value was 0.0002, which showed there was significant clustering. This suggests neighboring medium-density states tend to have similar happiness scores.
+
+```{r}
+# Scatterplot of Population Density vs. Happiness Score
+ggplot(merged_sf, aes(x = densityMi, y = `HappiestStatesTotalHappinessScore`)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  theme_minimal() +
+  labs(
+    title = "Relationship Between Population Density and Happiness",
+    x = "Population Density (People per Sq Km)",
+    y = "Happiness Score"
+  )
+
+```
+
+### Population Density Moran's I
+
+```{r}
+# Compute Moran's I for Population Density
+pop_density_nb <- spdep::poly2nb(merged_sf, queen = TRUE)
+
+# Allow empty neighbor sets
+pop_density_listw <- spdep::nb2listw(pop_density_nb, style = "W", zero.policy = TRUE)
+
+# Compute Moran's I for Population Density
+pop_density_moran <- spdep::moran.test(merged_sf$densityMi, pop_density_listw, zero.policy = TRUE)
+
+# Print the Moran's I result
+print(pop_density_moran)
+
+```
+
+A separate Moran's I test for population density revealed significant spatial clustering (Moran's I = 0.50, p-value < 0.001). States with similar density levels are geographically proximate, highlighting the influence of regional factors like urban planning, geography, and historical settlement patterns.
+
+### K-Means clustering
+
+```{r}
+# Subset relevant data (e.g., happiness scores and other numeric variables)
+cluster_data <- merged_sf %>%
+  st_drop_geometry() %>%  # Remove spatial geometry
+  select(HappiestStatesTotalHappinessScore, densityMi, HappiestStatesCommunityAndEnvironmentRank, HappiestStatesWorkEnvironmentRank) %>%
+  drop_na()  # Remove rows with missing values
+
+# Standardize the data
+cluster_data_scaled <- scale(cluster_data)
+
+# Determine the optimal number of clusters using the Elbow method
+set.seed(123)  # For reproducibility
+wss <- map_dbl(1:10, function(k) {
+  kmeans(cluster_data_scaled, centers = k, nstart = 25)$tot.withinss
+})
+
+# Plot the Elbow method
+plot(1:10, wss, type = "b", pch = 19, frame = FALSE,
+     xlab = "Number of Clusters (k)",
+     ylab = "Total Within-Cluster Sum of Squares")
+
+# Perform k-means clustering with the optimal number of clusters
+optimal_k <- 3  # Replace with the optimal number from the Elbow plot
+kmeans_result <- kmeans(cluster_data_scaled, centers = optimal_k, nstart = 25)
+
+# Add cluster assignments to the original dataset
+merged_sf$cluster <- as.factor(kmeans_result$cluster)
+
+# Scatterplot
+ggplot(merged_sf, aes(x = densityMi, y = HappiestStatesTotalHappinessScore, color = cluster)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Clustering Population Density and Happiness Scores",
+       x = "Population Density",
+       y = "Happiness Score",
+       color = "Cluster")
+
+# Visualize clusters on a map
+library(tmap)
+tm_shape(merged_sf) +
+  tm_polygons("cluster", palette = "Set2", title = "Clusters") +
+  tm_layout(title = "K-Means Clustering Results")
+```
+
+The K-means clustering analysis highlighted significant groupings of states based on happiness scores and population density. The analysis revealed that states with higher population densities tended to cluster separately from less densely populated regions, indicating potential differences in living conditions, access to resources, or societal structures. Additionally, happiness scores showed clear patterns within the clusters, with some groups exhibiting consistently high levels of happiness, while others were lower on average.
+
+Notably, coastal states often formed distinct clusters, possibly reflecting their access to natural resources, tourism-driven economies, or socio-cultural benefits of coastal living. In contrast, landlocked and rural states were associated with lower happiness scores and formed separate clusters, underscoring the potential impact of geographic and demographic factors on well-being. These insights suggest that regional characteristics play a vital role in shaping happiness and can inform targeted interventions to address disparities.
+
+### Findings
+
+- Population density does not directly correlate with happiness, but medium-density states show significant spatial clustering, suggesting some geographic influence on well-being.
+
+- Policymakers should consider regional trends and unique state characteristics when addressing well-being. Medium-density states could benefit from targeted initiatives to enhance happiness, while high-density states may require diverse strategies to address urban challenges.

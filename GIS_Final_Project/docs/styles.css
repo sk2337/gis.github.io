@@ -1,0 +1,30 @@
+/* styles.css */
+
+/* Change background color */
+body {
+    background-color: #f8f9fa; /* Light gray background */
+    color: #333; /* Text color */
+  }
+  
+  /* Change navigation bar background */
+  .navbar {
+    background-color: #004085; /* Dark blue navbar */
+  }
+  
+  /* Force tab text color to be white */
+  .navbar .nav-link {
+    color: lightgray !important; /* Force white text color */
+  }
+  
+  /* Ensure active tab text is also white */
+  .navbar .nav-link.active {
+    color: lightgray !important;
+  }
+  
+  /* Optional: Hover effect for better user feedback */
+  .navbar .nav-link:hover {
+    color: #f8d7da !important; /* Light red for hover */
+  }
+  
+
+  

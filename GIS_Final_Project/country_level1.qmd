@@ -1,0 +1,159 @@
+---
+title: "General Analysis of Global Happiness Scores"
+editor: visual
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+I first wanted to look at the general analysis of the data and see if the happiness scores displayed similar levels in neighboring countries. 
+
+### Descriptive Statistics
+```{r}
+# Load libraries
+library(tidyverse)
+library(sf)
+library(spdep)
+library(viridis)
+library(readxl)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(corrplot)
+```
+
+```{r}
+# Load spatial and happiness datasets
+world_sf <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+happiness_data <- read_excel("../data/WHR20_DataForTable2.1.xls")
+```
+
+```{r}
+# Summary of numeric variables
+summary(select_if(happiness_data, is.numeric))
+```
+
+```{r}
+# Check for missing values
+missing_data <- sapply(happiness_data, function(x) sum(is.na(x)))
+print(missing_data)
+
+# Visualize missing data
+library(DataExplorer)
+plot_missing(happiness_data)
+```
+
+
+### Visualization of Global Happiness Distribution
+```{r}
+# Select relevant columns
+happiness_data <- happiness_data %>%
+  select(
+    `year`, `Country name`, `Life Ladder`, `Log GDP per capita`, `Social support`, `Freedom to make life choices`, `Healthy life expectancy at birth`,
+    `Generosity`, `Perceptions of corruption`, `Democratic Quality`, `Delivery Quality`, `GINI index (World Bank estimate), average 2000-2017, unbalanced panel`,
+    `Confidence in national government`, `gini of household income reported in Gallup, by wp5-year`
+  )
+
+happiness_data <- happiness_data %>% 
+  rename(`gini of income` = `gini of household income reported in Gallup, by wp5-year`)
+```
+
+```{r}
+# Ensure the Life Ladder column is numeric
+happiness_data <- happiness_data %>%
+  mutate(`Life Ladder` = as.numeric(`Life Ladder`))
+```
+
+```{r}
+# Merge spatial and happiness data
+merged_sf <- left_join(world_sf, happiness_data, by = c("name" = "Country name"))
+merged_sf <- merged_sf[!is.na(merged_sf$`Life Ladder`), ] # Remove rows with missing happiness scores
+
+```
+
+```{r}
+# Plot happiness scores globally
+ggplot(data = merged_sf) +
+  geom_sf(aes(fill = `Life Ladder`), color = "white") +
+  scale_fill_viridis_c(option = "C", na.value = "gray") +
+  theme_minimal() +
+  labs(title = "Global Happiness Scores", fill = "Happiness Score")
+
+```
+
+Choropleth maps were used to visualize the global distribution of happiness scores. The maps revealed clear spatial patterns, with higher happiness levels concentrated in economically advanced regions such as Western Europe and North America. Conversely, lower scores were observed in regions facing socioeconomic challenges, such as parts of Africa and the Middle East. This visualization highlights the stark contrasts in global happiness and sets the stage for deeper spatial statistical exploration.
+
+### Spatial Autocorrelation and Clustering
+
+```{r}
+# Compute k-nearest neighbors (k = 5)
+coords <- st_coordinates(st_centroid(merged_sf))
+knn <- spdep::knearneigh(coords, k = 5)
+listw_knn <- spdep::nb2listw(spdep::knn2nb(knn), style = "W")
+
+# Compute Global Moran's I
+moran_global <- spdep::moran.test(merged_sf$`Life Ladder`, listw_knn)
+print(moran_global)
+
+```
+
+```{r}
+# Compute Local Moran's I
+local_moran <- spdep::localmoran(merged_sf$`Life Ladder`, listw_knn)
+
+# Add results to the spatial dataframe
+merged_sf$Ii <- local_moran[, "Ii"]
+merged_sf$p_value <- local_moran[, "Pr(z != E(Ii))"]
+
+# Plot Local Moran's I
+ggplot(merged_sf) +
+  geom_sf(aes(fill = Ii), color = "black") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  labs(title = "Local Moran's I for Happiness Scores", fill = "Local Moran's I")
+
+```
+
+```{r}
+# Add significance column (assuming p_value exists)
+merged_sf$significance <- ifelse(merged_sf$p_value < 0.05, "Significant", "Not Significant")
+```
+
+```{r}
+ggplot() +
+  geom_sf(data = merged_sf, aes(fill = `Life Ladder`), color = NA, alpha = 0.8) +
+  geom_sf(data = merged_sf, aes(color = significance), size = 0.3) +
+  scale_fill_viridis_c(option = "C", name = "Happiness Score", alpha = 0.8) +
+  scale_color_manual(
+    values = c("Significant" = "red", "Not Significant" = "transparent"),
+    name = "Moran's I Significance"
+  ) +
+  theme_minimal() +
+  labs(title = "Overlay of Happiness Scores and Moran's I Clusters")
+
+```
+
+To investigate spatial relationships, Moran’s I was calculated. The global Moran’s I statistic (0.876, p-value < 2.2e-16) confirmed strong spatial clustering of happiness scores, indicating that neighboring countries tend to exhibit similar happiness levels. Local Moran’s I further identified specific hotspots (clusters of high happiness scores) and coldspots (clusters of low scores). These localized clusters provide actionable insights into regions where happiness is either thriving or lagging, with the possibility of being linked to economic, political, or social conditions.
+
+## Hotspot Analysis and Regional Trends
+
+```{r}
+# Compute Getis-Ord Gi* and convert to numeric
+merged_sf$Gi_star <- as.numeric(spdep::localG(merged_sf$`Life Ladder`, listw_knn))
+
+# Plot hotspots and coldspots
+ggplot(merged_sf) +
+  geom_sf(aes(fill = Gi_star), color = "black") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  labs(
+    title = "Getis-Ord Gi* for Happiness Scores",
+    fill = "Gi* Value"
+  )
+
+```
+
+The Getis-Ord Gi* statistic was applied to detect spatial hotspots and coldspots of happiness scores. High-value hotspots often corresponded to regions with robust economic performance and social cohesion, such as Scandinavia and parts of North America. In contrast, coldspots aligned with areas grappling with instability or poverty. An overlay map combined happiness scores with clusters identified through Moran’s I, confirming the findings.

@@ -1,0 +1,397 @@
+---
+title: "Analysis of Geography-Based Happiness Patterns"
+editor: visual
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+Next, I wanted to look at the global happiness scores by their geographical factors, categorizing countries into coastal, landlocked, and climate zones. As nature is one of the factors that people find awe and interest, I thought nature could be a factor determining people's happiness. Also, people living in extreme conditions would have difficulties living compared to those living in other moderate climates; in Korea, there are alerts when the weather gets too hot, cautioning people not to get irritated. Thus I thought climates, especially places that do not have favorable conditions for living, would influence peoples' overall feelings. Patterns of happiness distribution and the role of geographic and climatic factors were analyzed.
+
+```{r}
+# Load libraries
+library(tidyverse)
+library(sf)
+library(spdep)
+library(viridis)
+library(readxl)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(corrplot)
+```
+
+```{r}
+# Load spatial and happiness datasets
+world_sf <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+happiness_data <- read_excel("../data/WHR20_DataForTable2.1.xls")
+```
+
+```{r}
+# Select relevant columns
+happiness_data <- happiness_data %>%
+  select(
+    `year`, `Country name`, `Life Ladder`, `Log GDP per capita`, `Social support`, `Freedom to make life choices`, `Healthy life expectancy at birth`,
+    `Generosity`, `Perceptions of corruption`, `Democratic Quality`, `Delivery Quality`, `GINI index (World Bank estimate), average 2000-2017, unbalanced panel`,
+    `Confidence in national government`, `gini of household income reported in Gallup, by wp5-year`
+  )
+
+happiness_data <- happiness_data %>% 
+  rename(`gini of income` = `gini of household income reported in Gallup, by wp5-year`)
+```
+
+```{r}
+# Ensure the Life Ladder column is numeric
+happiness_data <- happiness_data %>%
+  mutate(`Life Ladder` = as.numeric(`Life Ladder`))
+```
+
+```{r}
+key_variables <- c(
+  "Life Ladder", "Log GDP per capita", "Delivery Quality",
+  "Perceptions of corruption", "gini of income"
+)
+```
+
+```{r}
+# Merge spatial and happiness data
+merged_sf <- left_join(world_sf, happiness_data, by = c("name" = "Country name"))
+merged_sf <- merged_sf[!is.na(merged_sf$`Life Ladder`), ] # Remove rows with missing happiness scores
+
+```
+
+```{r}
+merged_sf <- st_transform(merged_sf, crs = 3857)
+world_sf <- st_transform(world_sf, crs = 3857)
+
+```
+
+### Coastal vs. Landlocked Countries
+
+```{r}
+# Load coastline data
+coastline <- ne_download(scale = "medium", type = "coastline", category = "physical", returnclass = "sf")
+
+# Combine coastlines into a single geometry
+coastline_union <- st_union(coastline)
+
+```
+
+```{r}
+# Ensure merged_sf and coastline_union have the same CRS
+if (st_crs(merged_sf) != st_crs(coastline_union)) {
+  coastline_union <- st_transform(coastline_union, st_crs(merged_sf))
+}
+```
+
+```{r}
+# Categorize countries as coastal or landlocked
+merged_sf$coastal <- ifelse(
+  lengths(st_is_within_distance(merged_sf$geometry, coastline_union, dist = 5 * 1000)) > 0,
+  "Coastal",
+  "Landlocked"
+)
+```
+
+```{r}
+# Compute summary statistics
+coastal_stats <- merged_sf %>%
+  group_by(coastal) %>%
+  summarize(avg_happiness = mean(`Life Ladder`, na.rm = TRUE))
+
+print(coastal_stats)
+
+```
+
+```{r}
+# Visualize happiness scores for coastal vs. landlocked
+ggplot(merged_sf) +
+  geom_sf(aes(fill = `Life Ladder`), color = "white") +
+  facet_wrap(~coastal) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  labs(title = "Happiness Scores: Coastal vs Landlocked", fill = "Happiness Score")
+
+```
+
+Countries were classified as coastal or landlocked by assessing proximity to coastlines. A comparison of average happiness scores revealed that coastal countries tend to be happier (avg_happiness = 5.61) than landlocked countries (avg_happiness = 4.95). Choropleth maps visualized this distinction, highlighting higher happiness scores along coastlines.
+
+
+```{r}
+table(merged_sf$coastal)
+```
+
+```{r}
+# Subset coastal and landlocked countries
+coastal_countries <- merged_sf[merged_sf$coastal == "Coastal", ]
+landlocked_countries <- merged_sf[merged_sf$coastal == "Landlocked", ]
+
+# Create spatial weights for coastal countries
+coastal_coords <- st_coordinates(st_centroid(coastal_countries))
+coastal_knn <- spdep::knearneigh(coastal_coords, k = 5)
+coastal_listw <- spdep::nb2listw(spdep::knn2nb(coastal_knn), style = "W")
+
+# Moran's I for coastal countries
+coastal_moran <- spdep::moran.test(coastal_countries$`Life Ladder`, coastal_listw)
+print(coastal_moran)
+
+# Create spatial weights for landlocked countries
+landlocked_coords <- st_coordinates(st_centroid(landlocked_countries))
+landlocked_knn <- spdep::knearneigh(landlocked_coords, k = 5)
+landlocked_listw <- spdep::nb2listw(spdep::knn2nb(landlocked_knn), style = "W")
+
+# Moran's I for landlocked countries
+landlocked_moran <- spdep::moran.test(landlocked_countries$`Life Ladder`, landlocked_listw)
+print(landlocked_moran)
+
+```
+
+```{r}
+# Monte Carlo simulation for coastal countries
+coastal_mc <- spdep::moran.mc(coastal_countries$`Life Ladder`, coastal_listw, nsim = 999)
+plot(coastal_mc, main = "Monte Carlo for Coastal Countries")
+print(coastal_mc)
+
+# Monte Carlo simulation for landlocked countries
+landlocked_mc <- spdep::moran.mc(landlocked_countries$`Life Ladder`, landlocked_listw, nsim = 999)
+plot(landlocked_mc, main = "Monte Carlo for Landlocked Countries")
+print(landlocked_mc)
+
+```
+
+```{r}
+# Convert political_freedom_category to numeric
+merged_sf$coastal_numeric <- as.numeric(as.factor(merged_sf$coastal))
+
+# Compute Moran's I for Political Freedom
+coastal_countries_nb <- spdep::poly2nb(merged_sf, queen = TRUE)
+
+# Allow empty neighbor sets
+coastal_countries_listw <- spdep::nb2listw(coastal_countries_nb, style = "W", zero.policy = TRUE)
+
+# Compute Moran's I for the numeric version of political freedom
+coastal_countries_moran <- spdep::moran.test(merged_sf$coastal_numeric, coastal_countries_listw, zero.policy = TRUE)
+
+# Print the Moran's I result
+print(coastal_countries_moran)
+```
+
+Moran's I analysis showed strong spatial autocorrelation for both groups, with coastal countries exhibiting a higher Moran's I value (0.894) compared to landlocked countries (0.751). This indicates tighter clustering of happiness scores among coastal countries, where neighboring regions often share similar happiness levels. Monte Carlo simulations confirmed the significance of these findings (p-value < 0.001), suggesting geography strongly influences happiness distribution.
+
+### Climate Zones and Happiness
+
+Countries were further categorized into climate zones (Tropical, Subtropical, Temperate, and Polar) based on latitude. Average happiness scores varied across these zones:
+
+Polar: 7.09 (highest)
+Temperate: 5.92
+Subtropical: 5.57
+Tropical: 4.93 (lowest)
+
+
+```{r}
+merged_sf <- st_transform(merged_sf, crs = 4326)
+merged_sf$latitude <- st_coordinates(st_centroid(merged_sf))[, 2]
+```
+
+```{r}
+summary(merged_sf$latitude)
+```
+
+```{r}
+# Categorize countries into climate zones
+merged_sf$climate_zone <- case_when(
+  merged_sf$latitude >= -23.5 & merged_sf$latitude <= 23.5 ~ "Tropical",
+  merged_sf$latitude > 23.5 & merged_sf$latitude <= 40 ~ "Sub Tropical",
+  merged_sf$latitude < -23.5 & merged_sf$latitude >= -40 ~ "Sub Tropical",
+  merged_sf$latitude > 40 & merged_sf$latitude <= 60 ~ "Temperate",
+  merged_sf$latitude < -40 & merged_sf$latitude >= -60 ~ "Temperate",
+  merged_sf$latitude > 60 | merged_sf$latitude < -60 ~ "Polar",
+  TRUE ~ NA_character_ # Assign NA if no condition matches
+)
+
+# Compute average happiness by climate zone
+climate_stats <- merged_sf %>%
+  group_by(climate_zone) %>%
+  summarize(avg_happiness = mean(`Life Ladder`, na.rm = TRUE))
+
+print(climate_stats)
+
+# Visualize happiness scores by climate zone
+ggplot(merged_sf) +
+  geom_sf(aes(fill = `Life Ladder`), color = "white") +
+  facet_wrap(~climate_zone) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  labs(title = "Happiness Scores by Climate Zone", fill = "Happiness Score")
+```
+
+### Moran's I by Climate Zone
+
+```{r}
+# Subset tropical, sub tropical, temperate, and polar countries
+tropical_countries <- merged_sf[merged_sf$climate_zone == "Tropical", ]
+subtropical_countries <- merged_sf[merged_sf$climate_zone == "Sub Tropical", ]
+temperate_countries <- merged_sf[merged_sf$climate_zone == "Temperate", ]
+polar_countries <- merged_sf[merged_sf$climate_zone == "Polar", ]
+```
+
+```{r}
+# Create spatial weights for tropical countries
+tropical_coords <- st_coordinates(st_centroid(tropical_countries))
+tropical_knn <- spdep::knearneigh(tropical_coords, k = 5)
+tropical_listw <- spdep::nb2listw(spdep::knn2nb(tropical_knn), style = "W")
+
+# Moran's I for tropical countries
+tropical_moran <- spdep::moran.test(tropical_countries$`Life Ladder`, tropical_listw)
+print(tropical_moran)
+```
+
+```{r}
+# Calculate centroids for subtropical countries
+subtropical_coords <- st_coordinates(st_centroid(subtropical_countries))
+
+# Create spatial weights using k-nearest neighbors
+subtropical_knn <- spdep::knearneigh(subtropical_coords, k = 5)
+subtropical_listw <- spdep::nb2listw(spdep::knn2nb(subtropical_knn), style = "W")
+
+# Moran's I for subtropical countries
+subtropical_moran <- spdep::moran.test(subtropical_countries$`Life Ladder`, subtropical_listw)
+print(subtropical_moran)
+
+```
+
+```{r}
+# Create spatial weights for temperate countries
+temperate_coords <- st_coordinates(st_centroid(temperate_countries))
+temperate_knn <- spdep::knearneigh(temperate_coords, k = 5)
+temperate_listw <- spdep::nb2listw(spdep::knn2nb(temperate_knn), style = "W")
+
+# Moran's I for temperate countries
+temperate_moran <- spdep::moran.test(temperate_countries$`Life Ladder`, temperate_listw)
+print(temperate_moran)
+```
+
+
+```{r}
+# Create spatial weights for polar countries
+polar_coords <- st_coordinates(st_centroid(polar_countries))
+polar_knn <- spdep::knearneigh(polar_coords, k = 5)
+polar_listw <- spdep::nb2listw(spdep::knn2nb(polar_knn), style = "W")
+
+# Moran's I for Polar countries
+polar_moran <- spdep::moran.test(polar_countries$`Life Ladder`, polar_listw)
+print(polar_moran)
+```
+
+```{r}
+# Monte Carlo simulation for tropical countries
+tropical_mc <- spdep::moran.mc(tropical_countries$`Life Ladder`, tropical_listw, nsim = 999)
+plot(tropical_mc, main = "Monte Carlo for Tropical Countries")
+print(tropical_mc)
+
+# Monte Carlo simulation for subtropical countries
+subtropical_mc <- spdep::moran.mc(subtropical_countries$`Life Ladder`, subtropical_listw, nsim = 999)
+plot(subtropical_mc, main = "Monte Carlo for Subtropical Countries")
+print(subtropical_mc)
+
+# Monte Carlo simulation for temperate countries
+temperate_mc <- spdep::moran.mc(temperate_countries$`Life Ladder`, temperate_listw, nsim = 999)
+plot(temperate_mc, main = "Monte Carlo for Temperate Countries")
+print(temperate_mc)
+
+# Monte Carlo simulation for polar countries
+polar_mc <- spdep::moran.mc(polar_countries$`Life Ladder`, polar_listw, nsim = 999)
+plot(polar_mc, main = "Monte Carlo for Polar Countries")
+print(polar_mc)
+```
+
+The polar region, including countries like Finland and Norway, exhibited the highest happiness scores. Conversely, tropical regions, often characterized by economic and social challenges, recorded the lowest scores, which was quite odd. Spatial weights and Moran's I tests revealed significant clustering within each climate zone, with temperate regions displaying the strongest spatial autocorrelation (Moran's I = 0.983).
+
+To look into a closer look at if this result was correct, I checked if there were any outliers for polar regions. It seemed strange to me that people living in extreme conditions had higher happiness scores, and I wanted to check if there were any points in the data that led to a mistinterpretation. 
+
+
+### Polar Outliers
+
+```{r}
+# Count the number of polar countries
+num_polar_countries <- nrow(polar_countries)
+print(paste("Number of polar countries:", num_polar_countries))
+
+```
+
+```{r}
+# Boxplot to check for outliers
+ggplot(polar_countries, aes(y = `Life Ladder`)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  labs(title = "Boxplot of Happiness Scores in Polar Countries", y = "Happiness Score")
+
+# Histogram for distribution
+ggplot(polar_countries, aes(x = `Life Ladder`)) +
+  geom_histogram(binwidth = 0.5, fill = "blue", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Distribution of Happiness Scores in Polar Countries", x = "Happiness Score", y = "Frequency")
+
+```
+
+```{r}
+# List polar countries with highest happiness scores
+top_polar_countries <- polar_countries %>%
+  arrange(desc(`Life Ladder`)) %>%
+  select(`name`, `Life Ladder`)
+print(top_polar_countries)
+
+```
+
+```{r}
+# Filter out potential outliers (e.g., scores above a certain threshold)
+polar_no_outliers <- polar_countries %>%
+  filter(`Life Ladder` < quantile(`Life Ladder`, 0.95)) # Adjust threshold if needed
+
+# Recalculate Moran's I for polar countries without outliers
+polar_no_outliers_coords <- st_coordinates(st_centroid(polar_no_outliers))
+polar_no_outliers_knn <- spdep::knearneigh(polar_no_outliers_coords, k = 5)
+polar_no_outliers_listw <- spdep::nb2listw(spdep::knn2nb(polar_no_outliers_knn), style = "W")
+polar_no_outliers_moran <- spdep::moran.test(polar_no_outliers$`Life Ladder`, polar_no_outliers_listw)
+print(polar_no_outliers_moran)
+
+```
+
+```{r}
+# Monte Carlo simulation for Moran's I in polar region
+polar_mc <- spdep::moran.mc(
+  polar_countries$`Life Ladder`,
+  polar_listw,
+  nsim = 999 # Number of simulations
+)
+
+# Plot Monte Carlo results
+plot(polar_mc, main = "Monte Carlo Simulation for Moran's I in Polar Region")
+
+```
+
+```{r}
+# Calculate Local Moran's I
+polar_local_moran <- spdep::localmoran(polar_countries$`Life Ladder`, polar_listw)
+
+# Add Local Moran's I results to the dataset
+polar_countries$Ii <- polar_local_moran[, "Ii"]
+polar_countries$p_value <- polar_local_moran[, "Pr(z != E(Ii))"]
+
+# Visualize clusters in polar regions
+ggplot(polar_countries) +
+  geom_sf(aes(fill = Ii), color = "black") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  labs(title = "Local Moran's I for Happiness Scores in Polar Region", fill = "Local Moran's I")
+
+```
+
+Outliers in the dataset, such as extremely high or low scores, were identified and filtered to refine spatial patterns further.The Hotspot analysis using Local Moran's I and Getis-Ord Gi* highlighted regions with localized clusters of high (hotspots) and low (coldspots) happiness scores. Unlike what I have expected, Polar countries demonstrated clear clusters of high happiness, which may be influenced by strong social systems and high standards of living.
+
+### Findings
+
+This analysis underscores the influence of geography and climate on happiness. Coastal countries, with access to trade, tourism, and natural resources, tend to have higher happiness scores and stronger clustering. Climate also plays a critical role, with polar and temperate zones benefiting from favorable socioeconomic conditions. The findings highlight how geographic proximity and environmental factors shape well-being, offering insights for policymakers aiming to address disparities.

@@ -1,0 +1,321 @@
+---
+title: "State-Level Happiness Analysis with Spatial Predictors"
+editor: visual
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+For this section, I wanted to see some other factors that might influence the happiness scores, including fiscal, educational, and geographic factors. As school resources, teacher and students' relationship, and education itself are allocation important variable in developing students' self esteem, I thought using education as a factor would be an interesting analysis. I used the fiscal data demonstrating states expenditures and the NAEP scores for 4th graders in the year 2022. By combining happiness scores with external datasets, the study investigates patterns in well-being and relationships with neighboring states.
+
+
+```{r}
+# Load libraries
+library(tidyverse)
+library(sf)
+library(spdep)
+library(viridis)
+library(readxl)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(corrplot)
+library(readxl)
+```
+
+```{r}
+# Load spatial and happiness datasets
+us_states <- ne_states(country = "United States of America", returnclass = "sf")
+happiness_state <- read_csv("../data/happiest_state_2022.csv", show_col_types = FALSE)
+
+# Merge spatial and happiness data
+merged_sf <- left_join(us_states, happiness_state, by = c("name" = "State"))
+merged_sf <- merged_sf[!is.na(merged_sf$`Total Score`), ] # Remove rows with missing happiness scores
+
+
+fiscal <- read_xlsx("../data/fiscal_predictors.xlsx")
+outcomes <- read_xlsx("../data/outcome_data.xlsx")
+dat2022 <- outcomes %>% filter(year == 2022)
+performance_dat <- left_join(dat2022, fiscal, by = c('jurisdiction' = 'STABR', 'year' = 'TargetYear'))
+
+merged_sf <- left_join(merged_sf, performance_dat, by = c("name" = "jurisLabel"))
+merged_sf <- st_transform(merged_sf, crs = 3857)
+```
+
+
+### Visualizations
+
+```{r}
+library(tmap)
+
+tm_shape(merged_sf) +
+  tm_polygons("Total Score", palette = "Blues", title = "Happiness Score") +
+  tm_layout(title = "State Happiness Scores")
+
+```
+
+This thematic map illustrates variations in happiness across states. Higher scores are concentrated in states like Hawaii, Maryland, and New Jersey, while lower scores are found in Louisiana and Arkansas.
+
+
+### Spatial Autocorrelation
+
+```{r}
+library(spdep)
+
+# Spatial neighbors and weights
+neighbors <- poly2nb(merged_sf, queen = TRUE)
+weights <- nb2listw(neighbors, style = "W", zero.policy = TRUE)
+
+# Moran's I
+morans <- moran.test(merged_sf$`Total Score`, weights, zero.policy = TRUE)
+print(morans)
+
+```
+
+Moran's I was used to test for spatial autocorrelation in happiness scores. The global Moran's I is 0.280 with a  p-value of 0.001. This indicates significant clustering of happiness scores, with geographically close states tending to share similar levels of happiness.
+
+### Predictors and Bivariate Relationships
+
+```{r}
+# Spatial lag of happiness scores
+lagged_happiness <- lag.listw(weights, merged_sf$`Total Score`)
+
+# Moran's I for math scores against lagged happiness scores
+morans_bivariate <- lm.morantest(lm(math ~ lagged_happiness, data = merged_sf), weights)
+print(morans_bivariate)
+
+```
+
+```{r}
+library(ggplot2)
+
+# Scatterplot
+ggplot(data = merged_sf, aes(x = math, y = lagged_happiness)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(x = "Math Scores", y = "Lagged Happiness Scores", title = "Moran Scatterplot: Math vs Happiness")
+
+```
+
+```{r}
+# Local Moran's I for math scores
+local_morans_math <- localmoran(merged_sf$math, weights)
+
+# Add LISA results for math to the spatial dataset
+merged_sf$lisa_math <- local_morans_math[, "Ii"]
+
+# Map clusters for math scores
+tm_shape(merged_sf) +
+  tm_polygons("lisa_math", palette = "RdBu", title = "LISA Clusters for Math") +
+  tm_layout(title = "Local Spatial Autocorrelation (Math Scores)")
+
+```
+
+```{r}
+# Spatial lag of happiness scores
+lagged_happiness <- lag.listw(weights, merged_sf$`Total Score`)
+
+# Moran's I for reading scores against lagged happiness scores
+morans_bivariate <- lm.morantest(lm(reading ~ lagged_happiness, data = merged_sf), weights)
+print(morans_bivariate)
+
+```
+
+```{r}
+library(ggplot2)
+
+# Scatterplot
+ggplot(data = merged_sf, aes(x = reading, y = lagged_happiness)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(x = "Reading Scores", y = "Lagged Happiness Scores", title = "Moran Scatterplot: Reading vs Happiness")
+
+```
+
+```{r}
+# Local Moran's I for reading scores
+local_morans_reading <- localmoran(merged_sf$reading, weights)
+
+# Add LISA results for reading to the spatial dataset
+merged_sf$lisa_reading <- local_morans_reading[, "Ii"]
+
+# Map clusters for reading scores
+tm_shape(merged_sf) +
+  tm_polygons("lisa_reading", palette = "RdBu", title = "LISA Clusters for Reading") +
+  tm_layout(title = "Local Spatial Autocorrelation (Reading Scores)")
+
+```
+
+```{r}
+# Spatial lag of happiness scores
+lagged_happiness <- lag.listw(weights, merged_sf$`Total Score`)
+
+# Moran's I for expenditure on education against lagged happiness scores
+morans_bivariate <- lm.morantest(lm(TE11 ~ lagged_happiness, data = merged_sf), weights)
+print(morans_bivariate)
+
+```
+
+```{r}
+library(ggplot2)
+
+# Scatterplot
+ggplot(data = merged_sf, aes(x = TE11, y = lagged_happiness)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(x = "Total Expenditure on Education", y = "Lagged Happiness Scores", title = "Moran Scatterplot: Total Expenditure on Education vs Happiness")
+
+```
+
+```{r}
+# Local Moran's I for expenditure on education
+local_morans_total_exp <- localmoran(merged_sf$TE11, weights)
+
+# Add LISA results for math to the spatial dataset
+merged_sf$lisa_total_exp <- local_morans_total_exp[, "Ii"]
+
+# Map clusters for total expenditure on education
+tm_shape(merged_sf) +
+  tm_polygons("lisa_total_exp", palette = "RdBu", title = "LISA Clusters for Total Expenditure on Education") +
+  tm_layout(title = "Local Spatial Autocorrelation (Total Expenditure on Education)")
+
+```
+
+```{r}
+# Spatial lag of happiness scores
+lagged_happiness <- lag.listw(weights, merged_sf$`Total Score`)
+
+# Moran's I for Local Revenues Student Activities against lagged happiness scores
+morans_bivariate <- lm.morantest(lm(R1K ~ lagged_happiness, data = merged_sf), weights)
+print(morans_bivariate)
+
+```
+
+```{r}
+library(ggplot2)
+
+# Scatterplot
+ggplot(data = merged_sf, aes(x = R1K, y = lagged_happiness)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(x = "Local Revenues Student Activities", y = "Lagged Happiness Scores", title = "Moran Scatterplot: Revenues Student Activities vs Happiness")
+
+```
+
+```{r}
+# Local Moran's I for Local Revenues Student Activitiese scores
+local_morans_reading <- localmoran(merged_sf$R1K, weights)
+
+# Add LISA results for Local Revenues Student Activitiese to the spatial dataset
+merged_sf$lisa_reading <- local_morans_reading[, "Ii"]
+
+# Map clusters for Local Revenues Student Activitiese scores
+tm_shape(merged_sf) +
+  tm_polygons("lisa_reading", palette = "RdBu", title = "LISA Clusters for Local Revenues Student Activitiese") +
+  tm_layout(title = "Local Spatial Autocorrelation (Local Revenues Student Activitieses)")
+
+```
+
+```{r}
+# Spatial lag of happiness scores
+lagged_happiness <- lag.listw(weights, merged_sf$`Total Score`)
+
+# Moran's I for math scores against lagged happiness scores
+morans_bivariate <- lm.morantest(lm(E12 ~ lagged_happiness, data = merged_sf), weights)
+print(morans_bivariate)
+
+```
+
+```{r}
+library(ggplot2)
+
+# Scatterplot
+ggplot(data = merged_sf, aes(x = E12, y = lagged_happiness)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(x = "Math Scores", y = "Lagged Happiness Scores", title = "Moran Scatterplot: Math vs Happiness")
+
+```
+
+```{r}
+# Local Moran's I for happiness scores
+local_morans <- localmoran(merged_sf$E12, weights)
+
+# Add LISA results to the spatial dataset
+merged_sf$lisa <- local_morans[, "Ii"]
+
+# Map clusters
+library(tmap)
+tm_shape(merged_sf) +
+  tm_polygons("lisa", palette = "RdBu", title = "LISA Clusters for Expenditures on Employee Benefits") +
+  tm_layout(title = "Local Spatial Autocorrelation (Expenditures on Employee Benefits)")
+
+```
+
+```{r}
+library(sf)
+library(tmap)
+library(dplyr)
+
+# Ensure merged_sf is projected in a suitable CRS (e.g., EPSG:3857 for meter units)
+merged_sf <- st_transform(merged_sf, crs = 3857)
+
+# Create a 50 km buffer around state borders
+state_buffers <- st_buffer(merged_sf, dist = 1000)
+
+# Visualize the states and their buffers
+tm_shape(merged_sf) +
+  tm_polygons("Total Score", palette = "Blues", title = "Happiness Scores") +
+  tm_shape(state_buffers) +
+  tm_borders(col = "red") +
+  tm_layout(title = "50 km Buffers Around States")
+
+# Find intersections (neighbors within the buffer)
+neighbors_in_buffer <- st_intersects(state_buffers, merged_sf)
+
+# Add neighbor happiness scores to each state's data
+merged_sf <- merged_sf %>%
+  mutate(
+    neighbor_happiness_mean = sapply(neighbors_in_buffer, function(neighbors) {
+      if (length(neighbors) > 1) {
+        mean(merged_sf$`Total Score`[neighbors], na.rm = TRUE)
+      } else {
+        NA
+      }
+    })
+  )
+
+# Compare happiness scores
+comparison <- merged_sf %>%
+  st_drop_geometry() %>%
+  select(name, `Total Score`, neighbor_happiness_mean) %>%
+  arrange(desc(`Total Score`))
+
+# Display the comparison table
+print(comparison)
+
+# Visualize neighbors' average happiness scores
+tm_shape(merged_sf) +
+  tm_polygons("neighbor_happiness_mean", palette = "-RdYlBu", title = "Neighbor Happiness Mean") +
+  tm_layout(title = "Average Happiness of Neighboring States Within 1 km")
+
+```
+
+
+Math and Reading Scores:
+
+Moran's I tests and scatterplots were used to examine the relationship between educational performance (e.g., math and reading scores) and happiness.
+Results for math and reading showed no significant spatial clustering in their relationship with happiness (p > 0.05).
+
+Fiscal Predictors:
+
+Relationships between happiness scores and expenditures (e.g., total educational spending and local revenues) were tested.
+Local revenues for student activities showed significant spatial clustering (Moran's I = 0.279, p < 0.001).
+Other fiscal predictors (e.g., expenditures on employee benefits) exhibited no significant spatial patterns.
+
+Buffer Analysis:
+
+States with higher happiness scores tended to have neighbors with above-average happiness. For example, Hawaii scored highest but lacked direct neighbors, while Maryland and New Jersey showed high scores alongside supportive neighbors.

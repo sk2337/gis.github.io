@@ -1,0 +1,167 @@
+---
+title: "Coastal vs. Landlocked Happiness Analysis for U.S. States"
+editor: visual
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+For this section, I tried to look for the relationship between geographic location (coastal or landlocked) and state-level happiness scores in the United States, like I did for analyzing the countries.
+
+```{r}
+# Load libraries
+library(tidyverse)
+library(sf)
+library(spdep)
+library(viridis)
+library(readxl)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(corrplot)
+```
+
+```{r}
+# Load spatial and happiness datasets
+us_states <- ne_states(country = "United States of America", returnclass = "sf")
+happiness_state <- read_csv("../data/happiest-states-2024.csv", show_col_types = FALSE)
+```
+
+```{r}
+# Merge spatial and happiness data
+merged_sf <- left_join(us_states, happiness_state, by = c("name" = "state"))
+merged_sf <- merged_sf[!is.na(merged_sf$`HappiestStatesTotalHappinessScore`), ] # Remove rows with missing happiness scores
+```
+
+```{r}
+merged_sf <- st_transform(merged_sf, crs = 3857)
+```
+
+```{r}
+# Load coastline data
+coastline <- ne_download(scale = "medium", type = "coastline", category = "physical", returnclass = "sf")
+
+# Combine coastlines into a single geometry
+coastline_union <- st_union(coastline)
+
+```
+
+```{r}
+# Ensure merged_sf and coastline_union have the same CRS
+if (st_crs(merged_sf) != st_crs(coastline_union)) {
+  coastline_union <- st_transform(coastline_union, st_crs(merged_sf))
+}
+```
+
+```{r}
+# Categorize countries as coastal or landlocked
+merged_sf$coastal <- ifelse(
+  lengths(st_is_within_distance(merged_sf$geometry, coastline_union, dist = 5 * 1000)) > 0,
+  "Coastal",
+  "Landlocked"
+)
+```
+
+```{r}
+# Compute summary statistics
+coastal_stats <- merged_sf %>%
+  group_by(coastal) %>%
+  summarize(avg_happiness = mean(HappiestStatesTotalHappinessScore, na.rm = TRUE))
+
+print(coastal_stats)
+```
+
+States are classified as Coastal or Landlocked based on their proximity to coastlines (within 5 km). Summary statistics reveal that coastal states have slightly higher average happiness scores (53.0) compared to landlocked states (50.1). This difference suggests that geographic features like access to coastal resources or tourism might influence well-being.
+
+### Exploratory Visualizations
+
+```{r}
+# Visualize happiness scores for coastal vs. landlocked
+ggplot(merged_sf) +
+  geom_sf(aes(fill = HappiestStatesTotalHappinessScore), color = "white") +
+  facet_wrap(~coastal) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  labs(title = "Happiness Scores: Coastal vs Landlocked", fill = "Happiness Score")
+
+```
+
+As we found in the summary statistics, this map shows the happiness scores for coastal and landlocked states. Coastal regions generally show higher scores, particularly in states along the East and West Coasts, possibly due to economic opportunities, cultural amenities, or environmental benefits.
+
+### Spatial Autocorrelation Analysis
+
+```{r}
+# Subset coastal and landlocked countries
+coastal_countries <- merged_sf[merged_sf$coastal == "Coastal", ]
+landlocked_countries <- merged_sf[merged_sf$coastal == "Landlocked", ]
+
+# Create spatial weights for coastal countries
+coastal_coords <- st_coordinates(st_centroid(coastal_countries))
+coastal_knn <- spdep::knearneigh(coastal_coords, k = 5)
+coastal_listw <- spdep::nb2listw(spdep::knn2nb(coastal_knn), style = "W")
+
+# Moran's I for coastal countries
+coastal_moran <- spdep::moran.test(coastal_countries$HappiestStatesTotalHappinessScore, coastal_listw)
+print(coastal_moran)
+
+# Create spatial weights for landlocked countries
+landlocked_coords <- st_coordinates(st_centroid(landlocked_countries))
+landlocked_knn <- spdep::knearneigh(landlocked_coords, k = 5)
+landlocked_listw <- spdep::nb2listw(spdep::knn2nb(landlocked_knn), style = "W")
+
+# Moran's I for landlocked countries
+landlocked_moran <- spdep::moran.test(landlocked_countries$HappiestStatesTotalHappinessScore, landlocked_listw)
+print(landlocked_moran)
+
+```
+
+```{r}
+# Monte Carlo simulation for coastal countries
+coastal_mc <- spdep::moran.mc(coastal_countries$HappiestStatesTotalHappinessScore, coastal_listw, nsim = 999)
+plot(coastal_mc, main = "Monte Carlo for Coastal Countries")
+print(coastal_mc)
+
+# Monte Carlo simulation for landlocked countries
+landlocked_mc <- spdep::moran.mc(landlocked_countries$HappiestStatesTotalHappinessScore, landlocked_listw, nsim = 999)
+plot(landlocked_mc, main = "Monte Carlo for Landlocked Countries")
+print(landlocked_mc)
+
+```
+
+Moran's I analysis showed strong spatial autocorrelation for both groups, with landlocked countries exhibiting a higher Moran's I value (0.332) compared to coastal countries (0.221). This indicates tighter clustering of happiness scores among landlocked countries, where neighboring regions often share similar happiness levels, unlike the result we found from the country-level data. Maybe as we supposed in the country-level data analysis, as there were too many countries that were classified as 'coastal', this might have led to a misinterpretation, or there are more other features contributing to the happiness scores for landlocked states in the United States. The Monte Carlo simulations confirmed the significance of these findings (p-value < 0.05), suggesting geography influences happiness distribution.
+
+```{r}
+# Convert political_freedom_category to numeric
+merged_sf$coastal_numeric <- as.numeric(as.factor(merged_sf$coastal))
+
+# Compute Moran's I for Political Freedom
+coastal_countries_nb <- spdep::poly2nb(merged_sf, queen = TRUE)
+
+# Allow empty neighbor sets
+coastal_countries_listw <- spdep::nb2listw(coastal_countries_nb, style = "W", zero.policy = TRUE)
+
+# Compute Moran's I for the numeric version of political freedom
+coastal_countries_moran <- spdep::moran.test(merged_sf$coastal_numeric, coastal_countries_listw, zero.policy = TRUE)
+
+# Print the Moran's I result
+print(coastal_countries_moran)
+```
+
+
+Also, the positive and significant Moran’s I value, 0.544, indicates spatial clustering of the coastal classification. This means that geographically proximate states tend to share similar geographic features (e.g., clusters of coastal states along the Atlantic or Pacific).
+This clustering underscores the geographic organization of U.S. states, with neighboring regions often sharing similar proximity to coastlines and related characteristics.
+
+
+### Insights and Observations
+Geographic Influence on Happiness:
+
+Coastal states tend to have higher happiness scores than landlocked states. This could be attributed to factors like economic diversity, access to recreational areas, or enhanced cultural and social opportunities.
+Regional Clustering:
+
+Coastal states are spatially clustered, with higher happiness scores concentrated along the U.S. coasts. This suggests that geographic proximity plays a role in shaping shared economic, environmental, or social conditions.
+Policy Implications:
+
+Policymakers in landlocked states could consider initiatives to improve happiness by replicating factors associated with coastal success, such as enhancing access to cultural or recreational activities.

@@ -1,0 +1,155 @@
+---
+title: "Climate Zones and Happiness in the United States"
+editor: visual
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+As we analyzed in the 'Country' section, I wanted to see the relationship between climate zones and state-level happiness scores in the United States. By categorizing states into climate zones based on latitude, the analysis explores patterns in happiness distribution and the impact of geography on well-being.
+
+
+```{r}
+# Load libraries
+library(tidyverse)
+library(sf)
+library(spdep)
+library(viridis)
+library(readxl)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(corrplot)
+```
+
+```{r}
+# Load spatial and happiness datasets
+us_states <- ne_states(country = "United States of America", returnclass = "sf")
+happiness_state <- read_csv("../data/happiest-states-2024.csv", show_col_types = FALSE)
+```
+
+```{r}
+# Merge spatial and happiness data
+merged_sf <- left_join(us_states, happiness_state, by = c("name" = "state"))
+merged_sf <- merged_sf[!is.na(merged_sf$`HappiestStatesTotalHappinessScore`), ] # Remove rows with missing happiness scores
+```
+
+```{r}
+merged_sf <- st_transform(merged_sf, crs = 3857)
+```
+
+```{r}
+# Categorize countries into climate zones
+merged_sf$climate_zone <- case_when(
+  merged_sf$latitude >= -23.5 & merged_sf$latitude <= 23.5 ~ "Tropical",
+  merged_sf$latitude > 23.5 & merged_sf$latitude <= 40 ~ "Sub Tropical",
+  merged_sf$latitude < -23.5 & merged_sf$latitude >= -40 ~ "Sub Tropical",
+  merged_sf$latitude > 40 & merged_sf$latitude <= 60 ~ "Temperate",
+  merged_sf$latitude < -40 & merged_sf$latitude >= -60 ~ "Temperate",
+  merged_sf$latitude > 60 | merged_sf$latitude < -60 ~ "Polar",
+  TRUE ~ NA_character_ # Assign NA if no condition matches
+)
+
+
+# Compute average happiness by climate zone
+climate_stats <- merged_sf %>%
+  group_by(climate_zone) %>%
+  summarize(avg_happiness = mean(`HappiestStatesTotalHappinessScore`, na.rm = TRUE))
+
+print(climate_stats)
+```
+
+States are categorized into the following climate zones based on their latitude:
+
+Tropical: Latitudes between -23.5° and 23.5°.
+Subtropical: Latitudes between 23.5° and 40° (north and south).
+Temperate: Latitudes between 40° and 60° (north and south).
+Polar: Latitudes above 60° or below -60°.
+
+The summary statistics suggest that tropical regions exhibit the highest happiness scores, potentially influenced by favorable environmental conditions or cultural factors. Conversely, polar regions show the lowest scores, likely due to harsher climates and limited population density.
+
+### Exploratory Visualizations
+
+```{r}
+# Visualize happiness scores by climate zone
+ggplot(merged_sf) +
+  geom_sf(aes(fill = `HappiestStatesTotalHappinessScore`), color = "white") +
+  facet_wrap(~climate_zone) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal() +
+  labs(title = "Happiness Scores by Climate Zone", fill = "Happiness Score")
+
+```
+
+
+This choropleth confirms that tropical zone’s high scores are particularly notable compared to the more moderate happiness levels in temperate and subtropical zones.
+
+A summary of happiness scores grouped by latitude ranges shows clear trends, with northern latitudes (temperate zones) exhibiting higher happiness than southern or polar regions.
+
+### Spatial Autocorrelation Analysis
+
+```{r}
+# Subset tropical, sub tropical, temperate, and polar countries
+tropical_countries <- merged_sf[merged_sf$climate_zone == "Tropical", ]
+subtropical_countries <- merged_sf[merged_sf$climate_zone == "Sub Tropical", ]
+temperate_countries <- merged_sf[merged_sf$climate_zone == "Temperate", ]
+polar_countries <- merged_sf[merged_sf$climate_zone == "Polar", ]
+```
+
+```{r}
+# Calculate centroids for subtropical countries
+subtropical_coords <- st_coordinates(st_centroid(subtropical_countries))
+
+# Create spatial weights using k-nearest neighbors
+subtropical_knn <- spdep::knearneigh(subtropical_coords, k = 5)
+subtropical_listw <- spdep::nb2listw(spdep::knn2nb(subtropical_knn), style = "W")
+
+# Moran's I for subtropical countries
+subtropical_moran <- spdep::moran.test(subtropical_countries$HappiestStatesTotalHappinessScore, subtropical_listw)
+print(subtropical_moran)
+
+```
+
+```{r}
+# Create spatial weights for temperate countries
+temperate_coords <- st_coordinates(st_centroid(temperate_countries))
+temperate_knn <- spdep::knearneigh(temperate_coords, k = 5)
+temperate_listw <- spdep::nb2listw(spdep::knn2nb(temperate_knn), style = "W")
+
+# Moran's I for temperate countries
+temperate_moran <- spdep::moran.test(temperate_countries$HappiestStatesTotalHappinessScore, temperate_listw)
+print(temperate_moran)
+```
+
+```{r}
+# Monte Carlo simulation for subtropical countries
+subtropical_mc <- spdep::moran.mc(subtropical_countries$HappiestStatesTotalHappinessScore, subtropical_listw, nsim = 999)
+plot(subtropical_mc, main = "Monte Carlo for Subtropical Countries")
+print(subtropical_mc)
+
+# Monte Carlo simulation for temperate countries
+temperate_mc <- spdep::moran.mc(temperate_countries$HappiestStatesTotalHappinessScore, temperate_listw, nsim = 999)
+plot(temperate_mc, main = "Monte Carlo for Temperate Countries")
+print(temperate_mc)
+
+```
+
+
+Spatial autocorrelation was tested within each climate zone using Moran's I and Monte Carlo simulations.
+
+For the subtropical zone, we found the Moran's I = 0.233 and a p-value = 0.005. Significant clustering of happiness scores indicates that neighboring subtropical states tend to share similar happiness levels.
+
+For the temperate zone, the Moran's I is 0.038 with the p-value 0.185. No significant clustering was detected, suggesting more variability in happiness across temperate states.
+
+Monte Carlo simulations confirmed the statistical significance of clustering in the subtropical zone but not in the temperate zone. This highlights regional differences in how geography influences happiness.
+
+### Findings
+
+- Tropical regions exhibit the highest happiness scores, possibly due to a combination of favorable climates, outdoor recreation opportunities, and cultural factors.
+
+- Polar regions show the lowest happiness, reflecting challenges associated with colder climates, such as isolation and limited resources.
+
+- Subtropical states demonstrate significant spatial clustering, suggesting regional factors like economic or cultural similarities contribute to shared well-being.

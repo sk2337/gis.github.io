@@ -1,0 +1,231 @@
+---
+title: "EDA for Country-Level Data"
+editor: visual
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+With the dataset I had, the list of the world countries and their happiness scores, I wanted to look at what factors were the most influential in determining happiness scores. What I first did was filter out variables that had a lot of NAs. 
+```{r}
+# Load libraries
+library(tidyverse)
+library(sf)
+library(spdep)
+library(viridis)
+library(readxl)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(corrplot)
+```
+
+```{r}
+# Load spatial and happiness datasets
+world_sf <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+happiness_data <- read_excel("../data/WHR20_DataForTable2.1.xls")
+```
+
+```{r}
+# Summary of numeric variables
+summary(select_if(happiness_data, is.numeric))
+```
+
+```{r}
+# Check for missing values
+missing_data <- sapply(happiness_data, function(x) sum(is.na(x)))
+print(missing_data)
+
+# Visualize missing data
+library(DataExplorer)
+plot_missing(happiness_data)
+```
+
+After filtering out the variables, I looked into the correlation matrix of the variables, which revealed a strong positive relationship between the happiness scores and "Log GDP per Capita," "Healthy Life Expectancy," and "Social Support." What was interesting to find was that "Delivery Quality" was highly and positively correlated with the happiness scores. Additionally, negative correlations with "Perceptions of Corruption" and "gini of household income" underscore the importance of effective governance, which was presumable.
+
+```{r}
+# Select relevant columns
+happiness_data <- happiness_data %>%
+  select(
+    `year`, `Country name`, `Life Ladder`, `Log GDP per capita`, `Social support`, `Freedom to make life choices`, `Healthy life expectancy at birth`,
+    `Generosity`, `Perceptions of corruption`, `Democratic Quality`, `Delivery Quality`, `GINI index (World Bank estimate), average 2000-2017, unbalanced panel`,
+    `Confidence in national government`, `gini of household income reported in Gallup, by wp5-year`
+  )
+
+happiness_data <- happiness_data %>% 
+  rename(`gini of income` = `gini of household income reported in Gallup, by wp5-year`)
+```
+
+```{r}
+# Ensure the Life Ladder column is numeric
+happiness_data <- happiness_data %>%
+  mutate(`Life Ladder` = as.numeric(`Life Ladder`))
+
+# Distribution of happiness scores
+ggplot(happiness_data, aes(x = `Life Ladder`)) +
+  geom_histogram(binwidth = 0.5, fill = "blue", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Distribution of Happiness Scores", x = "Happiness Score", y = "Frequency")
+
+```
+
+```{r}
+# Correlation matrix for numeric variables
+cor_matrix <- cor(select_if(happiness_data, is.numeric), use = "complete.obs")
+
+# Plot the correlation matrix with adjusted text size
+corrplot(cor_matrix, method = "circle", type = "upper", tl.cex = 0.4)
+
+key_variables <- c(
+  "Life Ladder", "Log GDP per capita", "Delivery Quality",
+  "Perceptions of corruption", "gini of income"
+)
+
+# Pairwise scatterplots for key variables
+pairs(
+  happiness_data[key_variables],
+  main = "Pairwise Scatterplots of Key Variables",
+  pch = 19,
+  col = rgb(0, 0, 0, alpha = 0.5)
+)
+```
+
+```{r}
+# Boxplot of key variables to identify outliers
+key_variables <- c(
+  "Life Ladder", "Log GDP per capita", "Delivery Quality",
+  "Perceptions of corruption", "gini of income"
+)
+
+happiness_data %>%
+  select(all_of(key_variables)) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  ggplot(aes(x = Variable, y = Value)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  labs(title = "Boxplots of Key Variables", y = "Value")
+
+```
+
+Then, I checked if there were any outliers present in these variables in order to get a better analysis of the data. Yet, there didn't seem to be any prominent outliers that seem to lead to a distorted correlation matrix.
+
+```{r}
+# Average happiness scores over time
+happiness_data %>%
+  group_by(year) %>%
+  summarize(Average_Happiness = mean(`Life Ladder`, na.rm = TRUE)) %>%
+  ggplot(aes(x = year, y = Average_Happiness)) +
+  geom_line(color = "blue", size = 1) +
+  geom_point(color = "red", size = 2) +
+  theme_minimal() +
+  labs(title = "Average Happiness Scores Over Time", x = "Year", y = "Average Happiness Score")
+```
+
+Next, the temporal analysis showed a gradual upward trend in average happiness scores from 2005 to 2019. As there was a sudden decline in the happiness scores from 2005 to 2006, I looked into detail what was the reason for this sudden change.
+
+```{r}
+# Filter data for the years 2006 and 2007
+happiness_2005 <- happiness_data %>%
+  filter(year %in% c(2005))
+
+# Calculate average happiness scores by country and year
+average_scores <- happiness_2005 %>%
+  group_by(`Country name`, year) %>%
+  summarize(
+    avg_happiness = mean(`Life Ladder`, na.rm = TRUE)
+  ) %>%
+  arrange(year, desc(avg_happiness)) # Sort by year and descending average happiness
+
+# View the result
+print(average_scores)
+```
+
+```{r}
+happiness_2006 <- happiness_data %>%
+  filter(year %in% c(2006))
+
+# Calculate average happiness scores by country and year
+average_scores <- happiness_2006 %>%
+  group_by(`Country name`, year) %>%
+  summarize(
+    avg_happiness = mean(`Life Ladder`, na.rm = TRUE)
+  ) %>%
+  arrange(year, desc(avg_happiness)) # Sort by year and descending average happiness
+
+# View the result
+print(average_scores)
+```
+
+```{r}
+# # Remove rows where the year is 2005
+# filtered_data <- happiness_data %>%
+#   filter(year != 2005)
+```
+
+```{r}
+# Average happiness scores by country
+average_happiness <- happiness_data %>%
+  group_by(`Country name`) %>%
+  summarize(Average_Happiness = mean(`Life Ladder`, na.rm = TRUE)) %>%
+  arrange(desc(Average_Happiness))
+
+print(head(average_happiness, 10)) # Top 10 happiest countries
+print(tail(average_happiness, 10)) # Bottom 10 happiest countries
+
+```
+
+After filtering for specific years, 2005 and 2006, I noticed that the number of data for 2005 was lacking, and the countries included in the data for the year 2005 were those with high happiness scores. We could easily see that Denmark, Finland, and Switzerland were consistently high-ranking countries, while South Sudan and Afghanistan remained at the bottom due to systemic challenges like conflict and poverty.
+
+```{r}
+# Pairwise scatterplots for key variables
+pairs(
+  select(happiness_data, `Life Ladder`, `Log GDP per capita`, `Delivery Quality`, `Healthy life expectancy at birth`),
+  main = "Pairwise Scatterplots of Key Variables",
+  pch = 19,
+  col = rgb(0, 0, 0, alpha = 0.5)
+)
+```
+
+```{r}
+# Scatterplot matrix for selected variables
+ggplot(happiness_data, aes(x = `Log GDP per capita`, y = `Life Ladder`)) +
+  geom_point(alpha = 0.7, color = "darkblue") +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  theme_minimal() +
+  labs(
+    title = "Happiness vs. Log GDP per Capita",
+    x = "Log GDP per Capita",
+    y = "Happiness Score"
+  )
+```
+
+```{r}
+# Scatterplot of Happiness vs. Delivery Quality
+ggplot(happiness_data, aes(x = `Delivery Quality`, y = `Life Ladder`)) +
+  geom_point(alpha = 0.7, color = "green") +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  theme_minimal() +
+  labs(
+    title = "Happiness vs. Delivery Quality",
+    x = "Delivery Quality",
+    y = "Happiness Score"
+  )
+```
+
+```{r}
+# Scatterplot of Happiness vs. Gini Income
+ggplot(happiness_data, aes(x = `gini of income`, y = `Life Ladder`)) +
+  geom_point(alpha = 0.7, color = "green") +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  theme_minimal() +
+  labs(
+    title = "Happiness vs. Gini Income",
+    x = "GINI Income",
+    y = "Happiness"
+  )
+```
+
+Scatterplots of happiness against key predictors reveal actionable insights. The positive relationship between happiness and "Log GDP per Capita" reinforces the importance of economic growth, while the negative correlation with the "GINI Index" highlights the adverse effects of income inequality. Similarly, variables such as "Delivery Quality" show moderate to strong positive correlations with happiness, underlining the role of governance and personal agency in improving well-being. With this EDA process, I could determine which variables to focus on for further spatial analyses.
